@@ -2,7 +2,7 @@
 Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
-import toml
+import tomlkit
 import logging
 import sys
 import threading
@@ -294,11 +294,12 @@ def load_alerts_from_config(module_name: Optional[str] = None) -> list[CategoryA
     config_dir = get_config_dir(module_name)
     config_file_path = Path(config_dir) / 'config.toml'  # 假设配置文件名为 config.toml
 
-    # 加载配置文件
-    config = toml.load(config_file_path)
-    
+    # 使用 tomlkit 读取配置文件
+    with open(config_file_path, 'r') as file:
+        config = tomlkit.load(file)
+
     alerts = []
-    for alert_config in config.get('alerts', []):
+    for alert_config in config['alerts']:
         category = alert_config['category']
         thresholds = [timedelta(hours=int(th.split(':')[0]), minutes=int(th.split(':')[1]), seconds=int(th.split(':')[2])) for th in alert_config['thresholds']]
         label = alert_config.get('label', category)
