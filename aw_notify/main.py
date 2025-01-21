@@ -2,7 +2,7 @@
 Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
-
+import toml
 import logging
 import sys
 import threading
@@ -20,6 +20,7 @@ from typing import (
 
 import aw_client.queries
 import click
+from aw_core.dirs import get_config_dir
 from aw_core.log import setup_logging
 from desktop_notifier import DesktopNotifier
 from typing_extensions import TypeAlias
@@ -288,22 +289,33 @@ def start(testing=False):
     start_new_day()
     threshold_alerts()
 
+def load_alerts_from_config(module_name: Optional[str] = None) -> list[CategoryAlert]:
+    """从 TOML 文件加载警报配置。"""
+    config_dir = get_config_dir(module_name)
+    config_file_path = Path(config_dir) / 'config.toml'  # 假设配置文件名为 config.toml
+
+    # 加载配置文件
+    config = toml.load(config_file_path)
+    
+    alerts = []
+    for alert_config in config.get('alerts', []):
+        category = alert_config['category']
+        thresholds = [timedelta(hours=int(th.split(':')[0]), minutes=int(th.split(':')[1]), seconds=int(th.split(':')[2])) for th in alert_config['thresholds']]
+        label = alert_config.get('label', category)
+        positive = alert_config.get('positive', False)
+        
+        alerts.append(CategoryAlert(category, thresholds, label, positive))
+    
+    return alerts
 
 def threshold_alerts():
     """
-    Checks elapsed time for each category and triggers alerts when thresholds are reached.
+    检查每个类别的已用时间，并在达到阈值时触发警报。
     """
-    # TODO: make configurable
-    alerts = [
-        CategoryAlert("All", [td1h, td2h, td4h, td6h, td8h], label="All"),
-        CategoryAlert("Twitter", [td15min, td30min, td1h], label="🐦 Twitter"),
-        CategoryAlert("Youtube", [td15min, td30min, td1h], label="📺 Youtube"),
-        CategoryAlert(
-            "Work", [td15min, td30min, td1h, td2h, td4h], label="💼 Work", positive=True
-        ),
-    ]
+    # 从配置文件加载警报
+    alerts = load_alerts_from_config('aw-notify')
 
-    # run through them once to check if any thresholds have been reached
+    # 遍历一次以检查是否达到任何阈值
     for alert in alerts:
         alert.update()
         alert.check(silent=True)
@@ -314,10 +326,10 @@ def threshold_alerts():
             alert.check()
             status = alert.status()
             if status != getattr(alert, "last_status", None):
-                logger.debug(f"New status: {status}")
+                logger.debug(f"新状态: {status}")
                 setattr(alert, "last_status", status)
 
-        # TODO: make configurable, perhaps increase default to save resources
+        # TODO: 使其可配置，可能增加默认值以节省资源
         sleep(10)
 
 
