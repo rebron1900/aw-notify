@@ -294,6 +294,11 @@ def load_alerts_from_config(module_name: Optional[str] = None) -> list[CategoryA
     config_dir = get_config_dir(module_name)
     config_file_path = Path(config_dir) / 'config.toml'  # 假设配置文件名为 config.toml
 
+    if not config_file_path.exists():
+        # 如果配置文件不存在，使用默认值
+        print("Config file not found, using default values.")
+        return [CategoryAlert("All", [timedelta(hours=1)], "All")]
+
     # 使用 tomlkit 读取配置文件
     with open(config_file_path, 'r') as file:
         config = tomlkit.load(file)
