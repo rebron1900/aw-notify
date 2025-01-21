@@ -17,6 +17,7 @@ python = "^3.9"
 aw-client = "^0.5.14"
 desktop-notifier = "^3.4.2"
 rubicon-objc = { version = "^0.4.0", platform = "darwin" }
+toml = "^0.10.2"  # 或者您需要的版本
 
 [tool.poetry.group.dev.dependencies]
 black = "*"
