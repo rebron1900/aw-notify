@@ -31,6 +31,7 @@ CacheKey: TypeAlias = tuple
 # TODO: Add thresholds for total time today (incl percentage of productive time)
 # TODO: read from server settings
 TIME_OFFSET = timedelta(hours=4)
+USAGE_START_DATE = datetime(year=2025, month=3, day=1, tzinfo=timezone.utc)
 
 td15min = timedelta(minutes=15)
 td30min = timedelta(minutes=30)
@@ -83,20 +84,23 @@ def cache_ttl(ttl: Union[timedelta, int]):
 
 
 @cache_ttl(60)
-def get_time(date=None, top_level_only=True) -> dict[str, timedelta]:
+def get_time(date_start=None, date_end=None, top_level_only=True) -> dict[str, timedelta]:
     """
     Returns a dict with the time spent today (or for `date`) for each category.
 
     Might throw exceptions if the query fails.
     """
     assert aw
-    if date is None:
-        date = datetime.now(timezone.utc)
-    date = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    if date_start is None:
+        date_start = datetime.now(timezone.utc)
+    if date_end is None:
+        date_end = datetime.now(timezone.utc)
+    date_start = date_start.replace(hour=0, minute=0, second=0, microsecond=0)
+    date_end = date_end.replace(hour=0, minute=0, second=0, microsecond=0)
     timeperiods = [
         (
-            date + TIME_OFFSET,
-            date + TIME_OFFSET + timedelta(days=1),
+            date_start + TIME_OFFSET,
+            date_end + TIME_OFFSET + timedelta(days=1),
         )
     ]
 
@@ -221,6 +225,7 @@ class CategoryAlert:
         label: Optional[str] = None,
         top_level_only: bool = True,
         annoying: bool = False,
+        track_overall: bool = False,
         positive=False,
     ):
         self.category = category
@@ -239,6 +244,12 @@ class CategoryAlert:
         self.annoying = annoying
         self.time_after_max_threshold = timedelta()
         self.annoying_count = 0
+        
+        # time spent from the start of using ActivityWatch
+        self.track_overall = track_overall
+        self.time_spent_from_start = timedelta()
+        self.overflow_time = timedelta()
+        self.last_day = (datetime.now(timezone.utc) - TIME_OFFSET).date()
 
         # whether the alert is "positive"
         # i.e. if the activity should be encouraged ("goal reached!")
@@ -263,6 +274,18 @@ class CategoryAlert:
             return time_to_next_day + min(self.thresholds)
 
         return min(self.thresholds_untriggered) - self.time_spent
+    
+    def start_new_day(self):
+        try:
+            self.time_spent_from_start = get_time(date_start=USAGE_START_DATE, top_level_only=self.top_level_only).get(
+                self.category, timedelta()
+            )
+            number_of_days = (datetime.now(timezone.utc) - USAGE_START_DATE).days
+            self.overflow_time = self.time_spent_from_start - self.thresholds[-1] * number_of_days
+            overflow_time = to_hms(self.overflow_time)
+            notify("Overflow time", f"Overflow time for {self.category}: {overflow_time}")
+        except Exception as e:
+            logger.error(f"Error getting time for {self.category}: {e}")
 
     def update(self):
         """
@@ -271,14 +294,17 @@ class CategoryAlert:
         now = datetime.now(timezone.utc)
         time_to_threshold = self.time_to_next_threshold
 
-        last_day = (datetime.now(timezone.utc) - TIME_OFFSET).date()
         day = (now - TIME_OFFSET).date()
-        if day != last_day:
+        if day != self.last_day:
+            logger.info(f"New day for {self.category}: {day}")
             self.time_spent = timedelta()
             self.last_check = now
             self.time_after_max_threshold = timedelta()
             self.max_triggered = timedelta()
             self.annoying_count = 0
+            self.last_day = day
+            if self.track_overall:
+                self.start_new_day()
 
         # print("Update?")
         if now > (self.last_check + time_to_threshold) or self.time_after_max_threshold:
@@ -288,6 +314,8 @@ class CategoryAlert:
                 self.time_spent = get_time(top_level_only=self.top_level_only).get(
                     self.category, timedelta()
                 )
+                if self.track_overall:
+                    self.time_spent += self.overflow_time
             except Exception as e:
                 logger.error(f"Error getting time for {self.category}: {e}")
             self.last_check = now
@@ -414,6 +442,7 @@ def threshold_alerts():
             label="Dota 2",
             top_level_only=False,
             annoying=True,
+            track_overall=True,
         ),
         CategoryAlert("Games", [td1h, td2h], label="Games"),
     ]
@@ -462,7 +491,7 @@ def send_checkin(title="Time today", date=None):
     Meant to be sent at a particular time, like at the end of a working day (e.g. 5pm).
     """
     try:
-        cat_time = get_time(date=date)
+        cat_time = get_time(date_start=date, date_end=date)
     except Exception as e:
         logger.error(f"Error getting time: {e}")
         return
