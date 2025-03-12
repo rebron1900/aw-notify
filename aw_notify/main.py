@@ -287,9 +287,7 @@ class CategoryAlert:
                 self.time_spent_from_start - self.thresholds[-1] * number_of_days
             )
             overflow_time = to_hms(self.overflow_time)
-            notify(
-                "Overflow time", f"Overflow time for {self.category}: {overflow_time}"
-            )
+            notify("Overflow time", f"Overflow time for {self.label}: {overflow_time}")
         except Exception as e:
             logger.error(f"Error getting time for {self.category}: {e}")
 
@@ -302,7 +300,7 @@ class CategoryAlert:
 
         day = (now - TIME_OFFSET).date()
         if day != self.last_day:
-            logger.info(f"New day for {self.category}: {day}")
+            logger.info(f"New day for {self.label}: {day}")
             self.time_spent = timedelta()
             self.last_check = now
             self.time_after_max_threshold = timedelta()
@@ -431,7 +429,6 @@ def threshold_alerts():
     # TODO: make configurable
     alerts = [
         CategoryAlert("All", [td1h, td2h, td4h, td6h, td8h], label="All"),
-        CategoryAlert("Twitter", [td15min, td30min, td1h], label="Twitter"),
         CategoryAlert(
             "Media>Browser>YouTube",
             [td15min, td30min, td1h],
@@ -441,6 +438,9 @@ def threshold_alerts():
         ),
         CategoryAlert(
             "Work", [td15min, td30min, td1h, td2h, td4h], label="Work", positive=True
+        ),
+        CategoryAlert(
+            "Productivity>Obsidian", [td30min, td1h], label="Obsidian", positive=True
         ),
         CategoryAlert(
             "Games>Dota 2",
