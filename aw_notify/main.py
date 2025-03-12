@@ -217,6 +217,7 @@ class CategoryAlert:
         thresholds: list[timedelta],
         label: Optional[str] = None,
         top_level_only: bool = True,
+        annoying: bool = False,
         positive=False,
     ):
         self.category = category
@@ -230,7 +231,12 @@ class CategoryAlert:
         # if False, consider all subcategories as well
         self.top_level_only = top_level_only
 
-        # wether the alert is "positive"
+        # whether the alert is "annoying"
+        # i.e. it would send a notification every time after the threshold is reached
+        self.annoying = annoying
+        self.time_after_max_threshold = timedelta()
+
+        # whether the alert is "positive"
         # i.e. if the activity should be encouraged ("goal reached!")
         # if not, assume neutral ("time spent")
         self.positive = positive
@@ -261,11 +267,13 @@ class CategoryAlert:
         now = datetime.now(timezone.utc)
         time_to_threshold = self.time_to_next_threshold
         # print("Update?")
-        if now > (self.last_check + time_to_threshold):
+        if now > (self.last_check + time_to_threshold) or self.time_after_max_threshold:
             logger.debug(f"Updating {self.category}")
             # print(f"Time to threshold: {time_to_threshold}")
             try:
-                self.time_spent = get_time(top_level_only=self.top_level_only).get(self.category, timedelta())
+                self.time_spent = get_time(top_level_only=self.top_level_only).get(
+                    self.category, timedelta()
+                )
             except Exception as e:
                 logger.error(f"Error getting time for {self.category}: {e}")
             self.last_check = now
@@ -289,7 +297,23 @@ class CategoryAlert:
                         f"{self.label}: {thres_str}"
                         + (f"  ({spent_str})" if thres_str != spent_str else ""),
                     )
-                break
+                return
+        if (
+            self.annoying
+            and self.time_after_max_threshold < self.time_spent - self.max_triggered
+        ):
+            if self.max_triggered and self.max_triggered <= self.time_spent:
+                self.time_after_max_threshold = self.time_spent - self.max_triggered
+                # TODO: use more general, or configurable, language for the notification
+                #       as each thres isn't necessarily a "goal" nor a "limit" being hit
+                if not silent:
+                    thres_str = to_hms(self.max_triggered)
+                    spent_str = to_hms(self.time_spent)
+                    notify(
+                        "Goal reached!" if self.positive else "Time spent",
+                        f"{self.label}: {thres_str}"
+                        + (f"  ({spent_str})" if thres_str != spent_str else ""),
+                    )
 
     def status(self) -> str:
         return f"""{self.label}: {to_hms(self.time_spent)}"""
@@ -357,11 +381,23 @@ def threshold_alerts():
     alerts = [
         CategoryAlert("All", [td1h, td2h, td4h, td6h, td8h], label="All"),
         CategoryAlert("Twitter", [td15min, td30min, td1h], label="Twitter"),
-        CategoryAlert("Youtube", [td15min, td30min, td1h], label="Youtube"),
+        CategoryAlert(
+            "Media>Browser>YouTube",
+            [td15min, td30min, td1h],
+            label="YouTube",
+            top_level_only=False,
+            annoying=True,
+        ),
         CategoryAlert(
             "Work", [td15min, td30min, td1h, td2h, td4h], label="Work", positive=True
         ),
-        CategoryAlert("Games>Dota 2", [td1h, td2h], label="Dota 2", top_level_only=False),
+        CategoryAlert(
+            "Games>Dota 2",
+            [td1h, td2h],
+            label="Dota 2",
+            top_level_only=False,
+            annoying=True,
+        ),
         CategoryAlert("Games", [td1h, td2h], label="Games"),
     ]
 
@@ -380,7 +416,7 @@ def threshold_alerts():
                 setattr(alert, "last_status", status)
 
         # TODO: make configurable, perhaps increase default to save resources
-        sleep(100)
+        sleep(60)
 
 
 @main.command()
