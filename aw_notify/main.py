@@ -84,7 +84,9 @@ def cache_ttl(ttl: Union[timedelta, int]):
 
 
 @cache_ttl(60)
-def get_time(date_start=None, date_end=None, top_level_only=True) -> dict[str, timedelta]:
+def get_time(
+    date_start=None, date_end=None, top_level_only=True
+) -> dict[str, timedelta]:
     """
     Returns a dict with the time spent today (or for `date`) for each category.
 
@@ -244,7 +246,7 @@ class CategoryAlert:
         self.annoying = annoying
         self.time_after_max_threshold = timedelta()
         self.annoying_count = 0
-        
+
         # time spent from the start of using ActivityWatch
         self.track_overall = track_overall
         self.time_spent_from_start = timedelta()
@@ -274,16 +276,20 @@ class CategoryAlert:
             return time_to_next_day + min(self.thresholds)
 
         return min(self.thresholds_untriggered) - self.time_spent
-    
+
     def start_new_day(self):
         try:
-            self.time_spent_from_start = get_time(date_start=USAGE_START_DATE, top_level_only=self.top_level_only).get(
-                self.category, timedelta()
-            )
+            self.time_spent_from_start = get_time(
+                date_start=USAGE_START_DATE, top_level_only=self.top_level_only
+            ).get(self.category, timedelta())
             number_of_days = (datetime.now(timezone.utc) - USAGE_START_DATE).days
-            self.overflow_time = self.time_spent_from_start - self.thresholds[-1] * number_of_days
+            self.overflow_time = (
+                self.time_spent_from_start - self.thresholds[-1] * number_of_days
+            )
             overflow_time = to_hms(self.overflow_time)
-            notify("Overflow time", f"Overflow time for {self.category}: {overflow_time}")
+            notify(
+                "Overflow time", f"Overflow time for {self.category}: {overflow_time}"
+            )
         except Exception as e:
             logger.error(f"Error getting time for {self.category}: {e}")
 
@@ -355,7 +361,7 @@ class CategoryAlert:
                         "Stop this activity or screen would be locked. Time spent",
                         f"{self.label}: {thres_str}"
                         + (f"  ({spent_str})" if thres_str != spent_str else ""),
-                        )
+                    )
                     self.annoying_count += 1
                 if self.annoying_count > 5:
                     subprocess.run("rundll32.exe user32.dll,LockWorkStation")
