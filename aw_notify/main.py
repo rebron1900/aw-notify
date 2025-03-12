@@ -23,7 +23,7 @@ from typing import (
 import aw_client.queries
 import click
 from aw_core.log import setup_logging
-from desktop_notifier import DesktopNotifierSync, Icon
+from desktop_notifier import DesktopNotifierSync, Icon, DEFAULT_SOUND
 from typing_extensions import TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -164,7 +164,7 @@ def notify(title: str, msg: str):
                 app_icon=Icon(uri=f"file://{icon_path}"),
                 notification_limit=10,
             )
-        notifier.send(title=title, message=msg)
+        notifier.send(title=title, message=msg, sound=DEFAULT_SOUND)
         return
     except Exception as e:
         logger.exception(f"desktop-notifier not used: {e}")
