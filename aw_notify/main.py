@@ -14,16 +14,12 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 from time import sleep
-from typing import (
-    Callable,
-    Optional,
-    TypeVar,
-    Union,
-)
+from typing import Callable, Optional, TypeVar, Union
 
 import aw_client.queries
 import click
 from aw_core.log import setup_logging
+from desktop_notifier import DEFAULT_SOUND, Attachment, DesktopNotifierSync, Icon
 from desktop_notifier import DesktopNotifier, Icon
 from typing_extensions import TypeAlias
 
@@ -37,6 +33,7 @@ CacheKey: TypeAlias = tuple
 # TODO: Add thresholds for total time today (incl percentage of productive time)
 # TODO: read from server settings
 TIME_OFFSET = timedelta(hours=4)
+USAGE_START_DATE = datetime(year=2025, month=3, day=1, tzinfo=timezone.utc)
 
 td15min = timedelta(minutes=15)
 td30min = timedelta(minutes=30)
@@ -49,13 +46,16 @@ td8h = timedelta(hours=8)
 # global objects
 # will init in entrypoints
 aw: Optional[AwClient] = None
-notifier: Optional[DesktopNotifier] = None
+notifier: Optional[DesktopNotifierSync] = None
 hostname: Optional[str] = None
 server_available: bool = True
 
 # executable path
 script_dir = Path(__file__).parent.absolute()
 icon_path = (script_dir / ".." / "media" / "logo" / "logo.png").resolve()
+attachment_path = (
+    script_dir / ".." / "media" / "banners" / "play-store-feature-graphic.png"
+).resolve()
 
 
 def cache_ttl(ttl: Union[timedelta, int]):
@@ -86,20 +86,25 @@ def cache_ttl(ttl: Union[timedelta, int]):
 
 
 @cache_ttl(60)
-def get_time(date=None, top_level_only=True) -> dict[str, timedelta]:
+def get_time(
+    date_start=None, date_end=None, top_level_only=True
+) -> dict[str, timedelta]:
     """
     Returns a dict with the time spent today (or for `date`) for each category.
 
     Might throw exceptions if the query fails.
     """
     assert aw
-    if date is None:
-        date = datetime.now(timezone.utc)
-    date = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    if date_start is None:
+        date_start = datetime.now(timezone.utc)
+    if date_end is None:
+        date_end = datetime.now(timezone.utc)
+    date_start = date_start.replace(hour=0, minute=0, second=0, microsecond=0)
+    date_end = date_end.replace(hour=0, minute=0, second=0, microsecond=0)
     timeperiods = [
         (
-            date + TIME_OFFSET,
-            date + TIME_OFFSET + timedelta(days=1),
+            date_start + TIME_OFFSET,
+            date_end + TIME_OFFSET + timedelta(days=1),
         )
     ]
 
@@ -160,24 +165,20 @@ def notify(title: str, msg: str):
     # Fall back to desktop-notifier
     try:
         if notifier is None:
-            notifier = DesktopNotifier(
+            notifier = DesktopNotifierSync(
                 app_name="AW",
                 app_icon=Icon(uri=f"file://{icon_path}"),
                 notification_limit=10,
             )
-
-        # Get or create event loop
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        # Send notification
-        loop.run_until_complete(notifier.send(title=title, message=msg))
+        notifier.send(
+            title=title,
+            message=msg,
+            sound=DEFAULT_SOUND,
+            attachment=Attachment(uri=f"file://{attachment_path}"),
+        )
         return
     except Exception as e:
-        logger.info(f"desktop-notifier not used: {e}")
+        logger.exception(f"desktop-notifier not used: {e}")
 
     # If all notification methods fail, log a warning
     logger.warning("All notification methods failed")
@@ -226,6 +227,9 @@ class CategoryAlert:
         category: str,
         thresholds: list[timedelta],
         label: Optional[str] = None,
+        top_level_only: bool = True,
+        annoying: bool = False,
+        track_overall: bool = False,
         positive=False,
     ):
         self.category = category
@@ -235,7 +239,23 @@ class CategoryAlert:
         self.time_spent = timedelta()
         self.last_check = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
-        # wether the alert is "positive"
+        # if True, only consider the top-level category
+        # if False, consider all subcategories as well
+        self.top_level_only = top_level_only
+
+        # whether the alert is "annoying"
+        # i.e. it would send a notification every time after the threshold is reached
+        self.annoying = annoying
+        self.time_after_max_threshold = timedelta()
+        self.annoying_count = 0
+
+        # time spent from the start of using ActivityWatch
+        self.track_overall = track_overall
+        self.time_spent_from_start = timedelta()
+        self.overflow_time = timedelta()
+        self.last_day = (datetime.now(timezone.utc) - TIME_OFFSET).date()
+
+        # whether the alert is "positive"
         # i.e. if the activity should be encouraged ("goal reached!")
         # if not, assume neutral ("time spent")
         self.positive = positive
@@ -259,18 +279,49 @@ class CategoryAlert:
 
         return min(self.thresholds_untriggered) - self.time_spent
 
+    def start_new_day(self):
+        try:
+            self.time_spent_from_start = get_time(
+                date_start=USAGE_START_DATE, top_level_only=self.top_level_only
+            ).get(self.category, timedelta())
+            number_of_days = (datetime.now(timezone.utc) - USAGE_START_DATE).days
+            self.overflow_time = (
+                self.time_spent_from_start - self.thresholds[-1] * number_of_days
+            )
+            overflow_time = to_hms(self.overflow_time)
+            notify("Overflow time", f"Overflow time for {self.label}: {overflow_time}")
+        except Exception as e:
+            logger.error(f"Error getting time for {self.category}: {e}")
+
     def update(self):
         """
         Update the time spent and check if a threshold has been reached.
         """
         now = datetime.now(timezone.utc)
         time_to_threshold = self.time_to_next_threshold
+
+        day = (now - TIME_OFFSET).date()
+        if day != self.last_day:
+            logger.info(f"New day for {self.label}: {day}")
+            self.time_spent = timedelta()
+            self.last_check = now
+            self.time_after_max_threshold = timedelta()
+            self.max_triggered = timedelta()
+            self.annoying_count = 0
+            self.last_day = day
+            if self.track_overall:
+                self.start_new_day()
+
         # print("Update?")
-        if now > (self.last_check + time_to_threshold):
+        if now > (self.last_check + time_to_threshold) or self.time_after_max_threshold:
             logger.debug(f"Updating {self.category}")
             # print(f"Time to threshold: {time_to_threshold}")
             try:
-                self.time_spent = get_time().get(self.category, timedelta())
+                self.time_spent = get_time(top_level_only=self.top_level_only).get(
+                    self.category, timedelta()
+                )
+                if self.track_overall:
+                    self.time_spent += self.overflow_time
             except Exception as e:
                 logger.error(f"Error getting time for {self.category}: {e}")
             self.last_check = now
@@ -294,7 +345,26 @@ class CategoryAlert:
                         f"{self.label}: {thres_str}"
                         + (f"  ({spent_str})" if thres_str != spent_str else ""),
                     )
-                break
+                return
+        if (
+            self.annoying
+            and self.time_after_max_threshold < self.time_spent - self.thresholds[-1]
+        ):
+            if self.thresholds[-1] <= self.time_spent:
+                self.time_after_max_threshold = self.time_spent - self.thresholds[-1]
+                # TODO: use more general, or configurable, language for the notification
+                #       as each thres isn't necessarily a "goal" nor a "limit" being hit
+                if not silent:
+                    thres_str = to_hms(self.max_triggered)
+                    spent_str = to_hms(self.time_spent)
+                    notify(
+                        "Stop this activity or screen would be locked. Time spent",
+                        f"{self.label}: {thres_str}"
+                        + (f"  ({spent_str})" if thres_str != spent_str else ""),
+                    )
+                    self.annoying_count += 1
+                if self.annoying_count > 5:
+                    subprocess.run("rundll32.exe user32.dll,LockWorkStation")
 
     def status(self) -> str:
         return f"""{self.label}: {to_hms(self.time_spent)}"""
@@ -384,11 +454,28 @@ def threshold_alerts():
     # TODO: make configurable
     alerts = [
         CategoryAlert("All", [td1h, td2h, td4h, td6h, td8h], label="All"),
-        CategoryAlert("Twitter", [td15min, td30min, td1h], label="🐦 Twitter"),
-        CategoryAlert("Youtube", [td15min, td30min, td1h], label="📺 Youtube"),
         CategoryAlert(
-            "Work", [td15min, td30min, td1h, td2h, td4h], label="💼 Work", positive=True
+            "Media>Browser>YouTube",
+            [td15min, td30min, td1h],
+            label="YouTube",
+            top_level_only=False,
+            annoying=True,
         ),
+        CategoryAlert(
+            "Work", [td15min, td30min, td1h, td2h, td4h], label="Work", positive=True
+        ),
+        CategoryAlert(
+            "Productivity>Obsidian", [td30min, td1h], label="Obsidian", positive=True
+        ),
+        CategoryAlert(
+            "Games>Dota 2",
+            [td1h, td2h],
+            label="Dota 2",
+            top_level_only=False,
+            annoying=True,
+            track_overall=True,
+        ),
+        CategoryAlert("Games", [td1h, td2h], label="Games"),
     ]
 
     # run through them once to check if any thresholds have been reached
@@ -406,7 +493,7 @@ def threshold_alerts():
                 setattr(alert, "last_status", status)
 
         # TODO: make configurable, perhaps increase default to save resources
-        sleep(10)
+        sleep(60)
 
 
 @main.command()
@@ -435,7 +522,7 @@ def send_checkin(title="Time today", date=None):
     Meant to be sent at a particular time, like at the end of a working day (e.g. 5pm).
     """
     try:
-        cat_time = get_time(date=date)
+        cat_time = get_time(date_start=date, date_end=date)
     except Exception as e:
         logger.error(f"Error getting time: {e}")
         return
