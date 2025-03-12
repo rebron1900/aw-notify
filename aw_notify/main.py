@@ -285,11 +285,15 @@ class CategoryAlert:
                 date_start=USAGE_START_DATE, top_level_only=self.top_level_only
             ).get(self.category, timedelta())
             number_of_days = (datetime.now(timezone.utc) - USAGE_START_DATE).days
-            self.overflow_time = (
-                self.time_spent_from_start - self.thresholds[-1] * number_of_days
+            self.overflow_time = max(
+                timedelta(),
+                self.time_spent_from_start - self.thresholds[-1] * number_of_days,
             )
-            overflow_time = to_hms(self.overflow_time)
-            notify("Overflow time", f"Overflow time for {self.label}: {overflow_time}")
+            if self.overflow_time:
+                overflow_time = to_hms(self.overflow_time)
+                notify(
+                    "Overflow time", f"Overflow time for {self.label}: {overflow_time}"
+                )
         except Exception as e:
             logger.error(f"Error getting time for {self.category}: {e}")
 
