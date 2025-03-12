@@ -13,17 +13,12 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 from time import sleep
-from typing import (
-    Callable,
-    Optional,
-    TypeVar,
-    Union,
-)
+from typing import Callable, Optional, TypeVar, Union
 
 import aw_client.queries
 import click
 from aw_core.log import setup_logging
-from desktop_notifier import DesktopNotifierSync, Icon, DEFAULT_SOUND
+from desktop_notifier import DEFAULT_SOUND, Attachment, DesktopNotifierSync, Icon
 from typing_extensions import TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -55,6 +50,9 @@ server_available: bool = True
 # executable path
 script_dir = Path(__file__).parent.absolute()
 icon_path = (script_dir / ".." / "media" / "logo" / "logo.png").resolve()
+attachment_path = (
+    script_dir / ".." / "media" / "banners" / "play-store-feature-graphic.png"
+).resolve()
 
 
 def cache_ttl(ttl: Union[timedelta, int]):
@@ -164,7 +162,12 @@ def notify(title: str, msg: str):
                 app_icon=Icon(uri=f"file://{icon_path}"),
                 notification_limit=10,
             )
-        notifier.send(title=title, message=msg, sound=DEFAULT_SOUND)
+        notifier.send(
+            title=title,
+            message=msg,
+            sound=DEFAULT_SOUND,
+            attachment=Attachment(uri=f"file://{attachment_path}"),
+        )
         return
     except Exception as e:
         logger.exception(f"desktop-notifier not used: {e}")
