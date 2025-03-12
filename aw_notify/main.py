@@ -238,6 +238,7 @@ class CategoryAlert:
         # i.e. it would send a notification every time after the threshold is reached
         self.annoying = annoying
         self.time_after_max_threshold = timedelta()
+        self.annoying_count = 0
 
         # whether the alert is "positive"
         # i.e. if the activity should be encouraged ("goal reached!")
@@ -269,6 +270,16 @@ class CategoryAlert:
         """
         now = datetime.now(timezone.utc)
         time_to_threshold = self.time_to_next_threshold
+
+        last_day = (datetime.now(timezone.utc) - TIME_OFFSET).date()
+        day = (now - TIME_OFFSET).date()
+        if day != last_day:
+            self.time_spent = timedelta()
+            self.last_check = now
+            self.time_after_max_threshold = timedelta()
+            self.max_triggered = timedelta()
+            self.annoying_count = 0
+
         # print("Update?")
         if now > (self.last_check + time_to_threshold) or self.time_after_max_threshold:
             logger.debug(f"Updating {self.category}")
@@ -313,10 +324,13 @@ class CategoryAlert:
                     thres_str = to_hms(self.max_triggered)
                     spent_str = to_hms(self.time_spent)
                     notify(
-                        "Goal reached!" if self.positive else "Time spent",
+                        "Stop this activity or screen would be locked. Time spent",
                         f"{self.label}: {thres_str}"
                         + (f"  ({spent_str})" if thres_str != spent_str else ""),
-                    )
+                        )
+                    self.annoying_count += 1
+                if self.annoying_count > 5:
+                    subprocess.run("rundll32.exe user32.dll,LockWorkStation")
 
     def status(self) -> str:
         return f"""{self.label}: {to_hms(self.time_spent)}"""
