@@ -300,10 +300,10 @@ class CategoryAlert:
                 return
         if (
             self.annoying
-            and self.time_after_max_threshold < self.time_spent - self.max_triggered
+            and self.time_after_max_threshold < self.time_spent - self.thresholds[-1]
         ):
-            if self.max_triggered and self.max_triggered <= self.time_spent:
-                self.time_after_max_threshold = self.time_spent - self.max_triggered
+            if self.thresholds[-1] <= self.time_spent:
+                self.time_after_max_threshold = self.time_spent - self.thresholds[-1]
                 # TODO: use more general, or configurable, language for the notification
                 #       as each thres isn't necessarily a "goal" nor a "limit" being hit
                 if not silent:
