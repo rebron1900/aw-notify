@@ -23,7 +23,7 @@ from typing import (
 import aw_client.queries
 import click
 from aw_core.log import setup_logging
-from desktop_notifier import DesktopNotifier
+from desktop_notifier import DesktopNotifierSync, Icon
 from typing_extensions import TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ td8h = timedelta(hours=8)
 # global objects
 # will init in entrypoints
 aw: Optional[AwClient] = None
-notifier: Optional[DesktopNotifier] = None
+notifier: Optional[DesktopNotifierSync] = None
 hostname: Optional[str] = None
 server_available: bool = True
 
@@ -159,15 +159,15 @@ def notify(title: str, msg: str):
     # Fall back to desktop-notifier
     try:
         if notifier is None:
-            notifier = DesktopNotifier(
+            notifier = DesktopNotifierSync(
                 app_name="AW",
-                app_icon=f"file://{icon_path}",
+                app_icon=Icon(uri=f"file://{icon_path}"),
                 notification_limit=10,
             )
-        notifier.send_sync(title=title, message=msg)
+        notifier.send(title=title, message=msg)
         return
     except Exception as e:
-        logger.info(f"desktop-notifier not used: {e}")
+        logger.exception(f"desktop-notifier not used: {e}")
 
     # If all notification methods fail, log a warning
     logger.warning("All notification methods failed")
@@ -216,6 +216,7 @@ class CategoryAlert:
         category: str,
         thresholds: list[timedelta],
         label: Optional[str] = None,
+        top_level_only: bool = True,
         positive=False,
     ):
         self.category = category
@@ -224,6 +225,10 @@ class CategoryAlert:
         self.max_triggered: timedelta = timedelta()
         self.time_spent = timedelta()
         self.last_check = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+        # if True, only consider the top-level category
+        # if False, consider all subcategories as well
+        self.top_level_only = top_level_only
 
         # wether the alert is "positive"
         # i.e. if the activity should be encouraged ("goal reached!")
@@ -260,7 +265,7 @@ class CategoryAlert:
             logger.debug(f"Updating {self.category}")
             # print(f"Time to threshold: {time_to_threshold}")
             try:
-                self.time_spent = get_time().get(self.category, timedelta())
+                self.time_spent = get_time(top_level_only=self.top_level_only).get(self.category, timedelta())
             except Exception as e:
                 logger.error(f"Error getting time for {self.category}: {e}")
             self.last_check = now
@@ -351,11 +356,13 @@ def threshold_alerts():
     # TODO: make configurable
     alerts = [
         CategoryAlert("All", [td1h, td2h, td4h, td6h, td8h], label="All"),
-        CategoryAlert("Twitter", [td15min, td30min, td1h], label="🐦 Twitter"),
-        CategoryAlert("Youtube", [td15min, td30min, td1h], label="📺 Youtube"),
+        CategoryAlert("Twitter", [td15min, td30min, td1h], label="Twitter"),
+        CategoryAlert("Youtube", [td15min, td30min, td1h], label="Youtube"),
         CategoryAlert(
-            "Work", [td15min, td30min, td1h, td2h, td4h], label="💼 Work", positive=True
+            "Work", [td15min, td30min, td1h, td2h, td4h], label="Work", positive=True
         ),
+        CategoryAlert("Games>Dota 2", [td1h, td2h], label="Dota 2", top_level_only=False),
+        CategoryAlert("Games", [td1h, td2h], label="Games"),
     ]
 
     # run through them once to check if any thresholds have been reached
@@ -373,7 +380,7 @@ def threshold_alerts():
                 setattr(alert, "last_status", status)
 
         # TODO: make configurable, perhaps increase default to save resources
-        sleep(10)
+        sleep(100)
 
 
 @main.command()
