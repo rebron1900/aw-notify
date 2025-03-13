@@ -254,6 +254,8 @@ class CategoryAlert:
         self.time_spent_from_start = timedelta()
         self.overflow_time = timedelta()
         self.last_day = (datetime.now(timezone.utc) - TIME_OFFSET).date()
+        if self.track_overall:
+            self.start_new_day()
 
         # whether the alert is "positive"
         # i.e. if the activity should be encouraged ("goal reached!")
