@@ -471,7 +471,7 @@ def threshold_alerts():
                     ">".join(category["name"]),
                     thresholds_to_datetime(data.get("thresholds", "").split(",")),
                     label=category["name"][-1],
-                    positive=data.get("score", -1) > 0,
+                    positive=int(data.get("score", -1)) > 0,
                     top_level_only=len(category["name"]) == 1,
                     annoying=data.get("notification", False),
                     track_overall=data.get("track_overtime", False),
