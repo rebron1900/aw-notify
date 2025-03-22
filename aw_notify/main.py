@@ -151,6 +151,10 @@ def to_hms(duration: timedelta) -> str:
     return s.strip()
 
 
+def thresholds_to_datetime(thresholds: list[str]) -> list[timedelta]:
+    return [timedelta(minutes=int(t)) for t in thresholds]
+
+
 def notify(title: str, msg: str):
     """send a notification to the user"""
     global notifier
@@ -457,32 +461,48 @@ def threshold_alerts():
     """
     Checks elapsed time for each category and triggers alerts when thresholds are reached.
     """
-    # TODO: make configurable
-    alerts = [
-        CategoryAlert("All", [td1h, td2h, td4h, td6h, td8h], label="All"),
-        CategoryAlert(
-            "Media>Browser>YouTube",
-            [td15min, td30min, td1h],
-            label="YouTube",
-            top_level_only=False,
-            annoying=True,
-        ),
-        CategoryAlert(
-            "Work", [td15min, td30min, td1h, td2h, td4h], label="Work", positive=True
-        ),
-        CategoryAlert(
-            "Productivity>Obsidian", [td30min, td1h], label="Obsidian", positive=True
-        ),
-        CategoryAlert(
-            "Games>Dota 2",
-            [td1h, td2h],
-            label="Dota 2",
-            top_level_only=False,
-            annoying=True,
-            track_overall=True,
-        ),
-        CategoryAlert("Games", [td1h, td2h], label="Games"),
-    ]
+    alerts = []
+    aw_settings = aw.get_setting("classes")
+    for category in aw_settings:
+        data = category.get("data", {})
+        if "thresholds" in data:
+            alerts.append(
+                CategoryAlert(
+                    ">".join(category["name"]),
+                    thresholds_to_datetime(data.get("thresholds", "").split(",")),
+                    label=category["name"][-1],
+                    positive=data.get("score", -1) > 0,
+                    top_level_only=len(category["name"]) == 1,
+                    annoying=data.get("notification", False),
+                    track_overall=data.get("track_overtime", False),
+                )
+            )
+
+    # alerts = [
+    #     CategoryAlert("All", [td1h, td2h, td4h, td6h, td8h], label="All"),
+    #     CategoryAlert(
+    #         "Media>Browser>YouTube",
+    #         [td15min, td30min, td1h],
+    #         label="YouTube",
+    #         top_level_only=False,
+    #         annoying=True,
+    #     ),
+    #     CategoryAlert(
+    #         "Work", [td15min, td30min, td1h, td2h, td4h], label="Work", positive=True
+    #     ),
+    #     CategoryAlert(
+    #         "Productivity>Obsidian", [td30min, td1h], label="Obsidian", positive=True
+    #     ),
+    #     CategoryAlert(
+    #         "Games>Dota 2",
+    #         [td1h, td2h],
+    #         label="Dota 2",
+    #         top_level_only=False,
+    #         annoying=True,
+    #         track_overall=True,
+    #     ),
+    #     CategoryAlert("Games", [td1h, td2h], label="Games"),
+    # ]
 
     # run through them once to check if any thresholds have been reached
     for alert in alerts:
