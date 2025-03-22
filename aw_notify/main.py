@@ -3,8 +3,9 @@ Get time spent for different categories in a day,
 and send notifications to the user on predefined conditions.
 """
 
-import asyncio
+import json
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -20,7 +21,6 @@ import aw_client.queries
 import click
 from aw_core.log import setup_logging
 from desktop_notifier import DEFAULT_SOUND, Attachment, DesktopNotifierSync, Icon
-from desktop_notifier import DesktopNotifier, Icon
 from typing_extensions import TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -108,17 +108,27 @@ def get_time(
         )
     ]
 
-    canonicalQuery = aw_client.queries.canonicalEvents(
-        aw_client.queries.DesktopQueryParams(
-            bid_window=f"aw-watcher-window_{hostname}",
-            bid_afk=f"aw-watcher-afk_{hostname}",
-        )
-    )
+    aw_settings = aw.get_setting()
+    always_active_pattern = aw.get_setting("always_active_pattern")
+    classes = aw_settings.get("classes")
+    classes = [(v["name"], v["rule"]) for v in classes]
+    # Needs escaping for regex patterns like '\w' to work (JSON.stringify adds extra unnecessary escaping)
+    classes_str = json.dumps(classes, cls=aw_client.queries.EnhancedJSONEncoder)
+    classes_str = re.sub(r"\\\\", r"\\", classes_str)
+
     query = f"""
-    {canonicalQuery}
-    duration = sum_durations(events);
-    cat_events = sort_by_duration(merge_events_by_keys(events, ["$category"]));
-    RETURN = {{"events": events, "duration": duration, "cat_events": cat_events}};
+    window_events = flood(query_bucket(find_bucket("aw-watcher-window_{hostname}")));
+    afk_events = flood(query_bucket(find_bucket("aw-watcher-afk_{hostname}")));
+    not_afk_events = filter_keyvals(afk_events, "status", ["not-afk"]);
+    not_treat_as_afk = filter_keyvals_regex(window_events, "app", "{always_active_pattern}");
+    not_afk_events = period_union(not_afk_events, not_treat_as_afk);
+    not_treat_as_afk = filter_keyvals_regex(window_events, "title", "{always_active_pattern}");
+    not_afk_events = period_union(not_afk_events, not_treat_as_afk);
+    window_events = filter_period_intersect(window_events, not_afk_events);
+    window_events = categorize(window_events, {classes_str});
+    cat_events = merge_events_by_keys(window_events, ["$category"]);
+    duration = sum_durations(cat_events);
+    RETURN = {{"duration": duration, "cat_events": cat_events}};
     """
 
     # NOTE: caller needs to handle exceptions
