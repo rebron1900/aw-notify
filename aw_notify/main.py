@@ -12,7 +12,7 @@ import sys
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from functools import wraps
+from functools import wraps, partial
 from pathlib import Path
 from time import sleep
 from typing import Callable, Optional, TypeVar, Union
@@ -20,7 +20,7 @@ from typing import Callable, Optional, TypeVar, Union
 import aw_client.queries
 import click
 from aw_core.log import setup_logging
-from desktop_notifier import DEFAULT_SOUND, Attachment, DesktopNotifierSync, Icon
+from desktop_notifier import DEFAULT_SOUND, Attachment, DesktopNotifierSync, Icon, ReplyField
 from typing_extensions import TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -165,7 +165,13 @@ def thresholds_to_datetime(thresholds: list[str]) -> list[timedelta]:
     return [timedelta(minutes=int(t)) for t in thresholds]
 
 
-def notify(title: str, msg: str):
+def handle_reply(category_alert: "CategoryAlert", reply_text: str):
+    """Callback function to handle user input from the notification."""
+    logger.info(f"User replied: {reply_text}")
+    category_alert.increase_prolonged_time(timedelta(minutes=int(reply_text)))
+
+
+def notify(title: str, msg: str, alert: Optional["CategoryAlert"] = None) -> None:
     """send a notification to the user"""
     global notifier
 
@@ -184,12 +190,25 @@ def notify(title: str, msg: str):
                 app_icon=Icon(uri=f"file://{icon_path}"),
                 notification_limit=10,
             )
-        notifier.send(
-            title=title,
-            message=msg,
-            sound=DEFAULT_SOUND,
-            attachment=Attachment(uri=f"file://{attachment_path}"),
-        )
+        if alert:
+            reply = ReplyField(
+                title=f"Prolong activity? (Max is {to_hms(alert.thresholds[-1] - alert.prolonged_time)})",
+                on_replied=partial(handle_reply, alert)
+            )
+            notifier.send(
+                title=title,
+                message=msg,
+                sound=DEFAULT_SOUND,
+                attachment=Attachment(uri=f"file://{attachment_path}"),
+                reply_field=reply,
+            )
+        else:
+            notifier.send(
+                title=title,
+                message=msg,
+                sound=DEFAULT_SOUND,
+                attachment=Attachment(uri=f"file://{attachment_path}"),
+            )
         return
     except Exception as e:
         logger.exception(f"desktop-notifier not used: {e}")
@@ -263,6 +282,8 @@ class CategoryAlert:
         self.time_after_max_threshold = timedelta()
         self.annoying_count = 0
 
+        self.prolonged_time = timedelta()
+
         # time spent from the start of using ActivityWatch
         self.track_overall = track_overall
         self.time_spent_from_start = timedelta()
@@ -297,14 +318,16 @@ class CategoryAlert:
 
     def start_new_day(self):
         try:
+            yesterday = datetime.now(timezone.utc) - timedelta(days=1)
             self.time_spent_from_start = get_time(
-                date_start=USAGE_START_DATE, top_level_only=self.top_level_only
+                date_start=yesterday, top_level_only=self.top_level_only
             ).get(self.category, timedelta())
-            number_of_days = (datetime.now(timezone.utc) - USAGE_START_DATE).days
+            number_of_days = (datetime.now(timezone.utc) - yesterday).days
             self.overflow_time = max(
                 timedelta(),
                 self.time_spent_from_start - self.thresholds[-1] * number_of_days,
             )
+            self.increase_prolonged_time(self.overflow_time)
             if self.overflow_time:
                 overflow_time = to_hms(self.overflow_time)
                 notify(
@@ -368,20 +391,28 @@ class CategoryAlert:
                 return
         if (
             self.annoying
-            and self.time_after_max_threshold < self.time_spent - self.thresholds[-1]
+            and self.time_after_max_threshold < self.time_spent - self.thresholds[-1] - self.prolonged_time
         ):
             if self.thresholds[-1] <= self.time_spent:
-                self.time_after_max_threshold = self.time_spent - self.thresholds[-1]
+                self.time_after_max_threshold = self.time_spent - self.thresholds[-1] - self.prolonged_time
                 # TODO: use more general, or configurable, language for the notification
                 #       as each thres isn't necessarily a "goal" nor a "limit" being hit
                 if not silent:
                     thres_str = to_hms(self.max_triggered)
                     spent_str = to_hms(self.time_spent)
-                    notify(
-                        "Stop this activity or screen would be locked. Time spent",
-                        f"{self.label}: {thres_str}"
-                        + (f"  ({spent_str})" if thres_str != spent_str else ""),
-                    )
+                    if self.prolonged_time == self.thresholds[-1]:
+                        notify(
+                            "Stop this activity or screen would be locked. Time spent",
+                            f"{self.label}: {thres_str}"
+                            + (f"  ({spent_str})" if thres_str != spent_str else ""),
+                        )
+                    else:
+                        notify(
+                            "Stop this activity or screen would be locked. Time spent",
+                            f"{self.label}: {thres_str}"
+                            + (f"  ({spent_str})" if thres_str != spent_str else ""),
+                            self
+                        )
                     self.annoying_count += 1
                 if self.annoying_count > 5:
                     subprocess.run("rundll32.exe user32.dll,LockWorkStation")
@@ -390,6 +421,12 @@ class CategoryAlert:
         return f"""{self.label}: {to_hms(self.time_spent)}"""
         # (time to thres: {to_hms(self.time_to_next_threshold)})
         # triggered: {self.max_triggered}"""
+
+    def increase_prolonged_time(self, time: timedelta):
+        """Increase the prolonged time by a given number of minutes."""
+        self.prolonged_time += time
+        self.prolonged_time = min(self.prolonged_time, self.thresholds[-1])
+        logger.info(f"Prolonged time for {self.label}: {self.prolonged_time}")
 
 
 def test_category_alert():
