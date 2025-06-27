@@ -427,6 +427,13 @@ class CategoryAlert:
         self.prolonged_time += time
         self.prolonged_time = min(self.prolonged_time, self.thresholds[-1])
         logger.info(f"Prolonged time for {self.label}: {self.prolonged_time}")
+        if self.prolonged_time != timedelta():
+            notify(
+                f"Prolonged time",
+                f"{self.label}: {self.prolonged_time}"
+                + f"  (Max more is {to_hms(self.thresholds[-1] - self.prolonged_time)})",
+                self
+            )
 
 
 def test_category_alert():
