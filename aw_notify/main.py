@@ -188,7 +188,6 @@ def notify(title: str, msg: str, alert: Optional["CategoryAlert"] = None) -> Non
             notifier = DesktopNotifierSync(
                 app_name="AW",
                 app_icon=Icon(uri=f"file://{icon_path}"),
-                notification_limit=10,
             )
         if alert:
             reply = ReplyField(
@@ -431,8 +430,7 @@ class CategoryAlert:
             notify(
                 f"Prolonged time",
                 f"{self.label}: {self.prolonged_time}"
-                + f"  (Max more is {to_hms(self.thresholds[-1] - self.prolonged_time)})",
-                self
+                + f"  (Max prolongation is {to_hms(self.thresholds[-1] - self.prolonged_time)})",
             )
 
 
