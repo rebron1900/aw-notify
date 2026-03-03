@@ -5,7 +5,8 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
-
+  workflow_dispatch:  # 添加这行来支持手动触发
+  
 jobs:
   build:
     name: Test on ${{ matrix.os }} (py-${{ matrix.python_version }})
