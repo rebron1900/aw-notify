@@ -5,8 +5,8 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
-  workflow_dispatch:
-
+  workflow_dispatch:  # 添加这行来支持手动触发
+  
 jobs:
   build:
     name: Test on ${{ matrix.os }} (py-${{ matrix.python_version }})
@@ -24,19 +24,30 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python_version }}
+    - name: Create virtualenv
+      shell: bash
+      run: |
+        python -m venv venv
     - name: Install dependencies
+      shell: bash
       run: |
         pip install poetry
-        poetry install --no-root
+        source venv/bin/activate || source venv/Scripts/activate
+        poetry install
     - name: Run tests
+      shell: bash
       run: |
-        poetry run make test
+        source venv/bin/activate || source venv/Scripts/activate
+        make test
     - name: Package
+      shell: bash
       run: |
-        poetry run make package
+        source venv/bin/activate || source venv/Scripts/activate
+        make package
     - name: Test package
+      shell: bash
       run: |
-        poetry run aw-notify --help
+          dist/aw-notify/aw-notify --help
     - name: Upload package
       uses: actions/upload-artifact@v4
       with:
