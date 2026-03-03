@@ -110,7 +110,7 @@ def get_time(
 
     aw_settings = aw.get_setting()
     always_active_pattern = aw.get_setting("always_active_pattern")
-    classes = aw_settings.get("classes")
+    classes = aw_settings.get("classes")  or []  # 添加 or [] 处理 None
     classes = [(v["name"], v["rule"]) for v in classes]
     # Needs escaping for regex patterns like '\w' to work (JSON.stringify adds extra unnecessary escaping)
     classes_str = json.dumps(classes, cls=aw_client.queries.EnhancedJSONEncoder)
